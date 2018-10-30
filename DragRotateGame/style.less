@@ -1,0 +1,42 @@
+@prefix: game-drag-rotate;
+
+.@{prefix} {
+    background-repeat: no-repeat;
+    background-position: center;
+    position: relative;
+
+    .@{prefix}-board,
+    .@{prefix}-background {
+        background-size: contain;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+    .@{prefix}-board {
+        z-index: 999;
+    }
+    .@{prefix}-image {
+        position: absolute;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+    }
+    .@{prefix}-item {
+        fill: none;
+        position: absolute;
+        left: 0;
+        right: 0;
+    }
+    .virtual-target-area {
+        position: absolute;
+        background-color: rgba(0, 0, 255, .2);
+    }
+    .adsorb-point {
+        display: block;
+        width: 6px;
+        height: 6px;
+        background: #f45;
+        border-radius: 50%;
+        position: absolute;
+    }
+}
