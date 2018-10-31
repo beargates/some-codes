@@ -3,6 +3,7 @@ import {Stage} from 'react-pixi-fiber';
 import DraggableContainer from './components/DraggableContainer';
 import Sprite from './components/Sprite';
 import Circle from './components/Circle';
+import Rect from './components/Rect';
 import Util from './components/util';
 
 import '../style.less';
@@ -22,18 +23,47 @@ class PIXIVersion extends Component {
         this.state = {
             ...this.mapPropsToState(props),
         };
+
+        this.init = this.init.bind(this);
+        this.goToEnd = this.goToEnd.bind(this);
+        this.calculatePosition = this.calculatePosition.bind(this);
     }
 
     componentDidMount() {
         this.state.items.forEach(item => this.getImageData(item.image));
         this.stage._canvas.style.width = `${this.props.width}px`;
         this.stage._canvas.style.height = `${this.props.height}px`;
+
+        // 禁止浏览器拖动资源文件，如img
+        // const container = ReactDOM.findDOMNode(this);
+        // if (container) {
+        //     container.onmousedown = function (e) {
+        //         e.preventDefault();
+        //     };
+        // }
+
+        // 初始化_dragdata_和吸附等信息
+        this.init();
+    }
+
+    init() {
+        this.state.items.forEach((v, i) => this.calculatePosition(i));
     }
 
     mapPropsToState(props) {
         let {items, background, answer, assets, adsorbPoints} = props;
-
-        let result = {};
+        // 将item按照answer进行排序，answer有序，item无序
+        // 没有修改过的item排在前面
+        if (answer) {
+            let itemsNotInAnswer = items.filter(item => answer.every(answerItem => answerItem.index !== item.index));
+            answer.forEach(answerItem => {
+                const _item = items.filter(item => item.index === answerItem.index)[0];
+                if (_item) {
+                    itemsNotInAnswer.push(_item);
+                }
+            });
+            items = itemsNotInAnswer;
+        }
         items = items.map(({image, audio, origin, index, phase, ...rest}) => {
             const {
                 meta: {
@@ -41,7 +71,6 @@ class PIXIVersion extends Component {
                     height,
                 }
             } = assets[image];
-
             const _item = {
                 image: assets[image],
                 audio: assets[audio],
@@ -50,41 +79,27 @@ class PIXIVersion extends Component {
                 phase,
                 ...rest
             };
-            // 如果答案里面没有配置该item，则取item的初试信息
-            if (answer && answer[index]) {
-                const answerItem = answer[index];
-                const currentPosition = {};
-
-                if (answerItem.adsorbPointIndex) {
-                    // 正确答案或用户答对的答案
-                    const adsorbPoint = adsorbPoints.filter(item => item.index === answerItem.adsorbPointIndex)[0];
-                    currentPosition.x = adsorbPoint.x - width / 4;
-                    currentPosition.y = adsorbPoint.y - height / 4;
-                } else if (typeof answerItem.x !== 'undefined') {
-                    // 用户作答错误数据
-                    currentPosition.x = answerItem.x - width / 4;
-                    currentPosition.y = answerItem.y - height / 4;
-                } else {
-                    currentPosition.x = origin.x;
-                    currentPosition.y = origin.y;
+            let answerItem = null;
+            if (answer) {
+                answerItem = answer.filter(item => item.index === index)[0];
+                if (answerItem) {
+                    if (typeof answerItem.x === 'undefined' && answerItem.adsorbPointIndex) {
+                        // 正确答案或用户答对的答案
+                        const adsorbPoint = adsorbPoints.filter(item => item.index === answerItem.adsorbPointIndex)[0];
+                        answerItem.x = adsorbPoint.x - width / 4;
+                        answerItem.y = adsorbPoint.y - height / 4;
+                    }
+                    _item._dragData_ = {
+                        tapCount: answerItem.rotation / phase,
+                        rotation: answerItem.rotation,
+                        x: answerItem.x,
+                        y: answerItem.y,
+                        lastDragDeltaX: answerItem.x - origin.x,
+                        lastDragDeltaY: answerItem.y - origin.y,
+                    };
                 }
-
-                _item._dragData_ = {
-                    tapCount: answerItem.rotation / phase,
-                    rotation: answerItem.rotation,
-                    ...currentPosition,
-                    lastDragDeltaX: currentPosition.x - origin.x,
-                    lastDragDeltaY: currentPosition.y - origin.y,
-                };
-                result[index] = {
-                    areaIndex: answerItem.areaIndex,
-                    rotation: answerItem.rotation,
-                };
-            } else {
-                result[index] = {
-                    // areaIndex,
-                    rotation: 0, // 初始旋转角度
-                };
+            }
+            if (!answer || !answerItem) {
                 _item._dragData_ = {
                     tapCount: 0,
                     rotation: 0,
@@ -101,7 +116,6 @@ class PIXIVersion extends Component {
             ...props,
             items,
             background: assets[background] || null,
-            result,
             answer,
             imageData: {},
         };
@@ -112,18 +126,26 @@ class PIXIVersion extends Component {
             ...this.mapPropsToState(props),
         }, () => {
             this.state.items.forEach(item => this.getImageData(item.image));
+            this.init();
         });
     }
 
     replay() {
         this.setState({
             ...this.mapPropsToState(this.props),
-        });
+        }, this.init);
     }
 
     getAnswer() {
-        // console.log(this.state.result);
-        return this.state.result;
+        return this.state.items.map(item => {
+            return {
+                index: item.index,
+                adsorbPointIndex: item._dragData_.adsorbPointIndex,
+                rotation: item._dragData_.rotation,
+                x: item._dragData_.x,
+                y: item._dragData_.y,
+            }
+        })
     }
 
     /**
@@ -140,48 +162,47 @@ class PIXIVersion extends Component {
             }
         } = item.image;
 
-        let realPosition = {
+        let real = {
             x: item._dragData_.x,
             y: item._dragData_.y,
         };
-        let centerPosition = {
-            x: realPosition.x + width / 4,
-            y: realPosition.y + height / 4
-        }; // 中心点位置
-        const {adsorbPoints} = this.state; // 吸附点
-        let adsorbPoint = null;
-        let adsorbPointIndex = '';
-        const distances = adsorbPoints.map(point => {
-            return Util.distance(point, centerPosition);
-        });
-        const allRightDistances = distances.filter(distance => {
-            return distance <= 30;
-        });
-        if (allRightDistances.length) {
-            adsorbPoint = adsorbPoints[distances.indexOf(Math.min(...allRightDistances))];
-            adsorbPointIndex = adsorbPoint.index;
+        let center = {
+            x: real.x + width / 4,
+            y: real.y + height / 4
+        };
+        let adsorb = null;
+        let adsorbIndex = null;
+        // 吸附点
+        const {adsorbPoints: adsorbs} = this.state;
+        const distances = adsorbs.map(point => Util.distance(point, center));
+        const validDistances = distances.filter(distance => distance <= 30);
+        if (validDistances.length) {
             const {_dragData_} = items[itemIndex];
+            adsorb = adsorbs[distances.indexOf(Math.min(...validDistances))];
+            adsorbIndex = adsorb.index;
             items[itemIndex]._dragData_ = {
                 ..._dragData_,
-                x: adsorbPoint.x - width / 4,
-                y: adsorbPoint.y - height / 4,
-                lastDragDeltaX: _dragData_.lastDragDeltaX + adsorbPoint.x - centerPosition.x, // 吸附产生的delta
-                lastDragDeltaY: _dragData_.lastDragDeltaY + adsorbPoint.y - centerPosition.y,
+                x: adsorb.x - width / 4,
+                y: adsorb.y - height / 4,
+                lastDragDeltaX: _dragData_.lastDragDeltaX + adsorb.x - center.x, // 吸附产生的delta
+                lastDragDeltaY: _dragData_.lastDragDeltaY + adsorb.y - center.y,
             };
-            centerPosition = adsorbPoint;
+            center = adsorb;
         }
+        items[itemIndex]._dragData_.adsorbIndex = adsorbIndex;
 
-        this.setState({
-            items,
-            result: {
-                ...this.state.result,
-                [item.index]: {
-                    adsorbPointIndex,
-                    rotation: item._dragData_.tapCount * item.phase,
-                    ...centerPosition
-                },
-            }
-        });
+        this.setState({items});
+    }
+
+    /**
+     * 使指定item在数组最后一位（后渲染的item出现在最顶层）
+     * @param index
+     * @returns {*}
+     */
+    goToEnd(index) {
+        const items = this.state.items.filter((item, i) => i !== index);
+        items.push(this.state.items[index]);
+        return items;
     }
 
     getPosition(item) {
@@ -281,13 +302,17 @@ class PIXIVersion extends Component {
 
     onContainerDragStart(e) {
         const draggingItemIndex = this.getTargetIndex(e);
+        const items = this.goToEnd(draggingItemIndex);
 
-        this.setState({draggingItemIndex});
+        this.setState({
+            draggingItemIndex: items.length - 1,
+            items,
+        });
     }
 
     onTap(e, index) {
-        const items = [...this.state.items];
-        const item = items[index];
+        const items = this.goToEnd(index);
+        const item = items[items.length - 1];
         const itemDragData = item._dragData_;
         itemDragData.tapCount++;
         itemDragData.rotation = itemDragData.tapCount * item.phase;
@@ -368,6 +393,21 @@ class PIXIVersion extends Component {
             ref={ref => this.stage = ref}
         >
             <Sprite image={background}/>
+            {
+                isPreview ? virtualTargetAreas.map((item, index) => {
+                    const {width, high: height, x, y} = item;
+
+                    return <Rect
+                        key={index}
+                        x={x}
+                        y={y}
+                        width={width}
+                        height={height}
+                        fill={0x0000ff}
+                        alpha={.2}
+                    />;
+                }) : null
+            }
             <DraggableContainer
                 ref={this.draggableContainer}
                 onPointerUp={e => this.onContainerTap(e)}
