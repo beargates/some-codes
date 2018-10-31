@@ -4,5 +4,10 @@
 ## line-with-game
    * 连连线小游戏（ui及交互仿照连连线小程序）
    * 有react-pixi版本（初衷是为了评测pixi和konva，最终选择pixi）
+   
+## chart-radar
+   * 基于canvas的雷达图（改编版）
 
-## 注：仅展示了游戏部分，另有mapper和judge（处理基本配置和判断是否正确答案）
+## 注：
+   * 仅展示了游戏部分，另有mapper和judge（处理基本配置和判断是否正确答案）；
+   * 目前代码比较杂乱，没有太多时间整理；
