@@ -3,7 +3,10 @@
  */
 import React, {Component} from 'react';
 import Hammer from '../../component/Hammer';
+import DOMGame from '../../component/DOMGame';
 import _ from 'underscore';
+
+import './only-one-line-game.less';
 
 const distance = ([x1, y1], [x2, y2]) => {
     return Math.sqrt(Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2));
@@ -14,15 +17,27 @@ const spreadArray = (array) => {
     return array.reduce((pre, next) => [...pre, ...next], []);
 };
 
+// 比较两个数组是否相等，比如[[1, 1], [2, 2]] === [[2, 2], [1, 1]]为true
+const isEqual = (arr1, arr2) => {
+    arr1 = [...arr1];
+    arr2 = [...arr2];
+    return _.isEqual(arr1, arr2)
+        || _.isEqual(arr1, arr2.reverse());
+};
+// 比较两个数组不相等
+const isNotEqual = (arr1, arr2) => {
+    arr1 = [...arr1];
+    arr2 = [...arr2];
+    return !_.isEqual(arr1, arr2)
+        && !_.isEqual(arr1, arr2.reverse());
+};
+
 class OnlyOneLineGame extends Component {
     constructor(props) {
         super(props);
 
         this.state = {
-            start: null,
-            lines: [],
-            virtualLine: null,
-            allPoints: spreadArray(this.props.lines)
+            ...this.mapPropsToState(this.props),
         };
         this.lineWidth = 5;
         this.ratio = 2;
@@ -30,8 +45,43 @@ class OnlyOneLineGame extends Component {
 
         this.onPan = this.onPan.bind(this);
         this.onPanStart = this.onPanStart.bind(this);
-        this.onPanEnd = this.onPanEnd.bind(this);
         this.drawLines = this.drawLines.bind(this);
+        this.onCancel = this.onCancel.bind(this);
+    }
+
+    componentWillReceiveProps(props) {
+        this.setState({
+            ...this.mapPropsToState(props),
+        }, this.renderCanvas);
+    }
+
+    mapPropsToState(props) {
+        let {lines, answer, background, assets} = props;
+
+        if (answer) {
+            lines = answer;
+        } else {
+            lines = [];
+        }
+
+        return {
+            ...props,
+            start: null,
+            lines,
+            virtualLine: null,
+            allPoints: spreadArray(props.lines),
+            background: assets[background.index] || null
+        }
+    }
+
+    replay() {
+        this.setState({
+            ...this.mapPropsToState(this.props),
+        }, this.renderCanvas);
+    }
+
+    getAnswer() {
+        return this.state.lines;
     }
 
     drawLine(ctx, line, options = {}) {
@@ -103,18 +153,38 @@ class OnlyOneLineGame extends Component {
         ].filter((v, i) => i === 0).forEach(line => {
             const start = line[0];
             if (start) {
-                this.ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+                this.ctx.shadowColor = 'rgba(0, 0, 0, .8)';
                 this.ctx.shadowOffsetX = 2;
                 this.ctx.shadowOffsetY = 2;
                 this.ctx.shadowBlur = 2;
                 this.ctx.textAlign = 'center';
                 this.ctx.textBaseline = 'middle';
-                this.ctx.font = `100 ${this.pointRadius * 2 * this.ratio}px Arial`;
+                this.ctx.font = `${this.pointRadius * 2 * this.ratio * .9}px Arial`;
                 this.ctx.fillStyle = '#fff';
-                this.ctx.strokeText('S', start[0] * this.ratio, start[1] * this.ratio);
+                this.ctx.fillText('S', start[0] * this.ratio, start[1] * this.ratio);
                 this.ctx.restore();
             }
         })
+    }
+
+    /**
+     * 在阶段起始点画一个圈
+     */
+    drawStageStartCircle() {
+        const start = this.getStartPoint();
+        if (!start) {
+            return;
+        }
+        let [x, y] = start;
+        x = x * this.ratio;
+        y = y * this.ratio;
+
+        this.ctx.beginPath();
+
+        this.ctx.arc(x, y, this.pointRadius * 1.8 * this.ratio, 0, Math.PI * 2);
+        this.ctx.lineWidth = this.ratio;
+        this.ctx.strokeStyle = 'rgb(0, 123, 255)';
+        this.ctx.stroke();
     }
 
     renderCanvas() {
@@ -126,19 +196,28 @@ class OnlyOneLineGame extends Component {
         this.ctx.clearRect(0, 0, 800 * this.ratio, 600 * this.ratio);
         this.drawLines(this.props.lines);
         this.drawLines(lines, linesStyle);
+        this.drawStageStartCircle();
         if (virtualLine) {
+            this.ctx.lineCap = 'round';
             this.drawLine(this.ctx, virtualLine, virtualLineStyle);
+            this.ctx.restore();
         }
         this.drawPoints(allPoints);
         this.drawStartPoint();
     }
 
-    componentDidMount() {
+    /**
+     * 初始化画布基本配置
+     */
+    init() {
         const {left, top} = this.canvas.getBoundingClientRect();
         this.ctx = this.canvas.getContext('2d');
         this.canvasX = left;
         this.canvasY = top;
+    }
 
+    componentDidMount() {
+        this.init();
         this.renderCanvas();
     }
 
@@ -163,7 +242,7 @@ class OnlyOneLineGame extends Component {
      * @param currentPoint
      * @returns {*}
      */
-    getNextLines(currentPoint) {
+    getNextLines(currentLines, currentPoint) {
         // 所有相关的线
         const maybeLines = this.props.lines.filter(line => {
             return line.some(point => _.isEqual(point, currentPoint));
@@ -171,43 +250,59 @@ class OnlyOneLineGame extends Component {
 
         // 过滤已经链接的线
         const nextLines = maybeLines.filter(line => {
-            return this.state.lines.every(existLine => {
-                return !_.isEqual(existLine, line) && !_.isEqual(existLine, line.reverse());
+            return currentLines.every(existLine => {
+                return isNotEqual(existLine, line);
             });
         });
 
         return nextLines;
     }
 
+    /**
+     * 获取起点
+     * 起点为最后画的线的末端或者虚拟线的起点
+     * @param ifIncludeVirtualLine
+     * @returns {*}
+     */
+    getStartPoint(ifIncludeVirtualLine = true) {
+        let start = null;
+        let {lines, virtualLine} = this.state;
+        if (lines && lines[lines.length - 1]) {
+            start = lines[lines.length - 1][1]; // 最后一条线的末端是下一条线的起点
+        } else if (ifIncludeVirtualLine && virtualLine) {
+            start = virtualLine[0];
+        }
+        return start;
+    }
+
     onPanStart(e) {
-        let {start, allPoints, virtualLine} = this.state;
+        // 页面可能发生滚动，所以需要重新初始化配置
+        this.init();
+
+        let {allPoints, lines, virtualLine} = this.state;
         const x = e.center.x - e.deltaX - this.canvasX; // 触发panStart前点击的点的坐标
         const y = e.center.y - e.deltaY - this.canvasY;
-        if (virtualLine) {
-            // 续接无效的line（virtualLine）
-            start = virtualLine[0];
-        } else {
-            // 存在可续接line时不允许另起start点
-            start = this.getNearPoint(allPoints, [x, y]) || null;
-        }
+        let start = this.getNearPoint(allPoints, [x, y]) || null;
 
-        if (start) {
-            let nextLines = this.getNextLines(start);
+        if (!virtualLine && start) {
+            virtualLine = [start, start];
+
+            let nextLines = this.getNextLines(lines, start);
 
             this.setState({
-                start,
                 nextLines,
+                virtualLine
             });
         }
-        // console.log(this.state.lines);
     }
 
     onPan(e) {
-        let {start, lines, allPoints} = this.state;
+        let start = this.getStartPoint();
         if (!start) {
             return;
         }
 
+        let {lines, allPoints} = this.state;
         const x = e.center.x - this.canvasX;
         const y = e.center.y - this.canvasY;
         const validPoints = allPoints.filter(point => !_.isEqual(point, start));
@@ -221,13 +316,11 @@ class OnlyOneLineGame extends Component {
             const tempLine = [start, end];
             // 不存在于已经画出的lines中
             const isNotExist = lines.every(existLine => {
-                return !_.isEqual(existLine, tempLine)
-                    && !_.isEqual(existLine, tempLine.reverse());
+                return isNotEqual(existLine, tempLine);
             });
             // 存在于给定的lines中
             const isExist = this.props.lines.some(existLine => {
-                return _.isEqual(existLine, tempLine)
-                    || _.isEqual(existLine, tempLine.reverse());
+                return isEqual(existLine, tempLine);
             });
             lines = [...lines];
             if (isNotExist && isExist) {
@@ -235,7 +328,7 @@ class OnlyOneLineGame extends Component {
                 start = end;
 
                 // 重新计算可以形成的线
-                let nextLines = this.getNextLines(start);
+                let nextLines = this.getNextLines(lines, start);
 
                 this.setState({
                     start,
@@ -243,92 +336,88 @@ class OnlyOneLineGame extends Component {
                     nextLines,
                 });
             }
-        } else {
+        }
+
+        this.setState({
+            virtualLine: [start, [x, y]],
+        }, this.renderCanvas);
+    }
+
+    onCancel() {
+        let {lines} = this.state;
+
+        let start = this.getStartPoint(false);
+        if (start) {
+            lines = [...lines];
+            lines.pop();
+
             this.setState({
-                virtualLine: [start, [x, y]],
+                lines,
+                virtualLine: lines.length ? [start, start] : null,
             }, this.renderCanvas);
         }
     }
 
-    onPanEnd() {
-        this.setState({
-            start: null,
-        });
-    }
-
     render() {
-        const width = 800;
-        const height = 600;
-        return <div>
-            <Hammer
-                onTap={this.onTap}
-                onPanStart={this.onPanStart}
-                onPan={this.onPan}
-                onPanEnd={this.onPanEnd}
-                direction="DIRECTION_ALL"
+        const {enable, assets, cancelButton} = this.props;
+        const {
+            background,
+            backgroundPosition,
+        } = this.state;
+        const {
+            meta: {
+                width: bgWidth,
+                height: bgHeight,
+            }
+        } = background;
+        const width = bgWidth / 2;
+        const height = bgHeight / 2;
+
+        return <DOMGame
+            style={{
+                top: backgroundPosition.y,
+                left: backgroundPosition.x,
+            }}
+            enable={enable}
+            width={this.props.width}
+            height={this.props.height}
+        >
+            <div
+                className="game-only-one-line-container"
+                style={{
+                    backgroundImage: `url(${background.url})`,
+                }}
             >
-                <canvas
-                    width={width * this.ratio}
-                    height={height * this.ratio}
+                <Hammer
+                    onTap={this.onTap}
+                    onPanStart={this.onPanStart}
+                    onPan={this.onPan}
+                    onPanEnd={this.onPanEnd}
+                    direction="DIRECTION_ALL"
+                >
+                    <canvas
+                        width={width * this.ratio}
+                        height={height * this.ratio}
+                        style={{
+                            width,
+                            height,
+                        }}
+                        ref={ref => this.canvas = ref}
+                    />
+                </Hammer>
+                <button
+                    className="btn-cancel"
+                    onClick={this.onCancel}
                     style={{
-                        width,
-                        height
+                        width: cancelButton.width,
+                        height: cancelButton.height,
+                        top: cancelButton.y,
+                        left: cancelButton.x,
                     }}
-                    ref={ref => this.canvas = ref}
                 />
-            </Hammer>
-        </div>
+            </div>
+        </DOMGame>
     }
 }
 
-class Game extends Component {
-    render() {
-        let lines = [
-            [
-                [3, 0],
-                [1, 2]
-            ],
-            [
-                [3, 0],
-                [5, 2]
-            ],
-
-            [
-                [1, 2],
-                [2.5, 4]
-            ],
-            [
-                [5, 2],
-                [3.5, 4]
-            ],
-            [
-                [2, 4],
-                [2.5, 4]
-            ],
-            [
-                [2.5, 4],
-                [3.5, 4]
-            ],
-            [
-                [3.5, 4],
-                [4, 4]
-            ],
-            [
-                [2, 4],
-                [0, 6]
-            ],
-            [
-                [4, 4],
-                [6, 6]
-            ],
-            [
-                [0, 6],
-                [6, 6]
-            ],
-        ];
-        lines = lines.map(line => line.map(point => point.map(x => x * 50 + 100)));
-        return <OnlyOneLineGame lines={lines}/>;
-    }
-}
-
-export default Game;
+export default OnlyOneLineGame;
