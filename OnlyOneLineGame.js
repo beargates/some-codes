@@ -32,51 +32,56 @@ const isNotEqual = (arr1, arr2) => {
         && !_.isEqual(arr1, arr2.reverse());
 };
 
+const mapPropsToState = (props) => {
+    let {lines, answer, background, assets} = props;
+
+    if (answer) {
+        lines = answer;
+    } else {
+        lines = [];
+    }
+
+    return {
+        ...props,
+        start: null,
+        lines,
+        virtualLine: null,
+        allPoints: spreadArray(props.lines),
+        background: assets[background.index] || null
+    }
+};
+
 class OnlyOneLineGame extends Component {
     constructor(props) {
         super(props);
 
         this.state = {
-            ...this.mapPropsToState(this.props),
+            ...mapPropsToState(this.props),
         };
-        this.lineWidth = 5;
+        this.lineWidth = 7;
         this.ratio = 2;
-        this.pointRadius = 7;
+        this.stageStartCircleRatio = 1;
+        this.pointRadius = 10;
+
+        this.intervalTimer = null;
+        this.timeoutTimer = null;
 
         this.onPan = this.onPan.bind(this);
         this.onPanStart = this.onPanStart.bind(this);
         this.drawLines = this.drawLines.bind(this);
         this.onCancel = this.onCancel.bind(this);
+        this.animation = this.animation.bind(this);
     }
 
     componentWillReceiveProps(props) {
         this.setState({
-            ...this.mapPropsToState(props),
+            ...mapPropsToState(props),
         }, this.renderCanvas);
-    }
-
-    mapPropsToState(props) {
-        let {lines, answer, background, assets} = props;
-
-        if (answer) {
-            lines = answer;
-        } else {
-            lines = [];
-        }
-
-        return {
-            ...props,
-            start: null,
-            lines,
-            virtualLine: null,
-            allPoints: spreadArray(props.lines),
-            background: assets[background.index] || null
-        }
     }
 
     replay() {
         this.setState({
-            ...this.mapPropsToState(this.props),
+            ...mapPropsToState(this.props),
         }, this.renderCanvas);
     }
 
@@ -93,7 +98,7 @@ class OnlyOneLineGame extends Component {
 
         const {
             width = this.lineWidth,
-            strokeStyle = 'rgb(0, 123, 255)',
+            strokeStyle = 'rgb(0, 123, 255, .2)',
         } = options;
 
         ctx.beginPath();
@@ -153,16 +158,17 @@ class OnlyOneLineGame extends Component {
         ].filter((v, i) => i === 0).forEach(line => {
             const start = line[0];
             if (start) {
-                this.ctx.shadowColor = 'rgba(0, 0, 0, .8)';
-                this.ctx.shadowOffsetX = 2;
-                this.ctx.shadowOffsetY = 2;
-                this.ctx.shadowBlur = 2;
-                this.ctx.textAlign = 'center';
-                this.ctx.textBaseline = 'middle';
-                this.ctx.font = `${this.pointRadius * 2 * this.ratio * .9}px Arial`;
-                this.ctx.fillStyle = '#fff';
-                this.ctx.fillText('S', start[0] * this.ratio, start[1] * this.ratio);
-                this.ctx.restore();
+                const ctx = this.ctx;
+                ctx.shadowColor = 'rgba(0, 0, 0, .8)';
+                ctx.shadowOffsetX = 2;
+                ctx.shadowOffsetY = 2;
+                ctx.shadowBlur = 2;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = `${this.pointRadius * 2 * this.ratio * .9}px Arial`;
+                ctx.fillStyle = '#fff';
+                ctx.fillText('S', start[0] * this.ratio, start[1] * this.ratio);
+                ctx.restore();
             }
         })
     }
@@ -175,35 +181,60 @@ class OnlyOneLineGame extends Component {
         if (!start) {
             return;
         }
+        const ctx = this.ctx;
         let [x, y] = start;
         x = x * this.ratio;
         y = y * this.ratio;
 
-        this.ctx.beginPath();
+        const radius = this.pointRadius * this.ratio * this.stageStartCircleRatio * 1.8;
+        const gradient = this.ctx.createRadialGradient(x, y, radius * .4, x, y, radius);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        gradient.addColorStop(1, 'rgba(0, 123, 255, .4)');
 
-        this.ctx.arc(x, y, this.pointRadius * 1.8 * this.ratio, 0, Math.PI * 2);
-        this.ctx.lineWidth = this.ratio;
-        this.ctx.strokeStyle = 'rgb(0, 123, 255)';
-        this.ctx.stroke();
+        ctx.beginPath();
+
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.lineWidth = this.ratio;
+        ctx.strokeStyle = 'rgba(0, 123, 255, .6)';
+        ctx.fillStyle = gradient;
+        ctx.stroke();
+        ctx.fill();
+    }
+
+    animation() {
+        clearTimeout(this.timeoutTimer);
+        this.intervalTimer = setInterval(() => {
+            this.stageStartCircleRatio += .3 / 60; // 从1倍放大到1.4倍
+            this.renderCanvas();
+        }, 1000 / 60);
     }
 
     renderCanvas() {
         const {lines, virtualLine, allPoints} = this.state;
-        const linesStyle = {width: 12, strokeStyle: 'rgb(0, 123, 255, .6)'};
-        const virtualLineStyle = {width: 12, strokeStyle: 'rgb(0, 123, 255, .6)'};
+        const linesStyle = {strokeStyle: 'rgb(0, 123, 255)'};
+        const virtualLineStyle = {strokeStyle: 'rgb(0, 123, 255, .6)'};
 
         // 清除整个画布
         this.ctx.clearRect(0, 0, 800 * this.ratio, 600 * this.ratio);
         this.drawLines(this.props.lines);
         this.drawLines(lines, linesStyle);
-        this.drawStageStartCircle();
         if (virtualLine) {
             this.ctx.lineCap = 'round';
             this.drawLine(this.ctx, virtualLine, virtualLineStyle);
             this.ctx.restore();
         }
         this.drawPoints(allPoints);
-        this.drawStartPoint();
+        if (!this.props.answer) {
+            this.drawStageStartCircle();
+            this.drawStartPoint();
+        }
+
+        if (this.stageStartCircleRatio > 1.3) {
+            clearInterval(this.intervalTimer);
+
+            this.stageStartCircleRatio = 1;
+            this.timeoutTimer = setTimeout(this.animation, 200);
+        }
     }
 
     /**
@@ -219,6 +250,7 @@ class OnlyOneLineGame extends Component {
     componentDidMount() {
         this.init();
         this.renderCanvas();
+        // this.animation(); // 定时刷新canvas
     }
 
     /**
@@ -239,8 +271,9 @@ class OnlyOneLineGame extends Component {
 
     /**
      * 获取接下来可以链接成的线
+     * @param currentLines
      * @param currentPoint
-     * @returns {*}
+     * @returns {T[]}
      */
     getNextLines(currentLines, currentPoint) {
         // 所有相关的线
@@ -249,13 +282,11 @@ class OnlyOneLineGame extends Component {
         });
 
         // 过滤已经链接的线
-        const nextLines = maybeLines.filter(line => {
+        return maybeLines.filter(line => {
             return currentLines.every(existLine => {
                 return isNotEqual(existLine, line);
             });
         });
-
-        return nextLines;
     }
 
     /**
@@ -287,10 +318,10 @@ class OnlyOneLineGame extends Component {
         if (!virtualLine && start) {
             virtualLine = [start, start];
 
-            let nextLines = this.getNextLines(lines, start);
+            // let nextLines = this.getNextLines(lines, start);
 
             this.setState({
-                nextLines,
+                // nextLines,
                 virtualLine
             });
         }
@@ -328,12 +359,12 @@ class OnlyOneLineGame extends Component {
                 start = end;
 
                 // 重新计算可以形成的线
-                let nextLines = this.getNextLines(lines, start);
+                // nextLines = this.getNextLines(lines, start);
 
                 this.setState({
-                    start,
                     lines,
-                    nextLines,
+                    // nextLines,
+                    virtualLine: null,
                 });
             }
         }
@@ -346,7 +377,7 @@ class OnlyOneLineGame extends Component {
     onCancel() {
         let {lines} = this.state;
 
-        let start = this.getStartPoint(false);
+        let start = this.getStartPoint();
         if (start) {
             lines = [...lines];
             lines.pop();
@@ -359,7 +390,7 @@ class OnlyOneLineGame extends Component {
     }
 
     render() {
-        const {enable, assets, cancelButton} = this.props;
+        const {enable, cancelButton} = this.props;
         const {
             background,
             backgroundPosition,
@@ -374,10 +405,6 @@ class OnlyOneLineGame extends Component {
         const height = bgHeight / 2;
 
         return <DOMGame
-            style={{
-                top: backgroundPosition.y,
-                left: backgroundPosition.x,
-            }}
             enable={enable}
             width={this.props.width}
             height={this.props.height}
@@ -386,6 +413,7 @@ class OnlyOneLineGame extends Component {
                 className="game-only-one-line-container"
                 style={{
                     backgroundImage: `url(${background.url})`,
+                    backgroundPosition: `${backgroundPosition.x}px ${backgroundPosition.y}px`,
                 }}
             >
                 <Hammer
